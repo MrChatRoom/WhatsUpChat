@@ -42,17 +42,11 @@ return await res.json()
 }catch{return {offers:[],answers:[]}}
 }
 
-async function pushJSON(data){
-await fetch("https://api.github.com/repos/<username>/<repo>/contents/public/signaling.json", {
+async function updateJSON(data){
+await fetch("signaling.json",{
 method:"PUT",
-headers:{
-"Authorization":"token <YOUR_GITHUB_PERSONAL_ACCESS_TOKEN>",
-"Content-Type":"application/json"
-},
-body:JSON.stringify({
-message:"Update signaling",
-content:btoa(JSON.stringify(data))
-})
+headers:{"Content-Type":"application/json"},
+body:JSON.stringify(data)
 })
 }
 
@@ -73,21 +67,24 @@ navigator.mediaDevices.getUserMedia({audio:false,video:false}).catch(()=>{})
 async function syncSignaling(){
 let data=await fetchJSON()
 
+// connect to all offers
 for(let i=0;i<data.offers.length;i++){
-await pc.setRemoteDescription({type:"offer",sdp:data.offers[i]})
+const offer=data.offers[i]
+await pc.setRemoteDescription({type:"offer",sdp:offer})
 const answer=await pc.createAnswer()
 await pc.setLocalDescription(answer)
 data.answers.push(answer.sdp)
 data.offers.splice(i,1)
 i--
-await pushJSON(data)
+await updateJSON(data)
 }
 
+// share local offer if no one exists
 if(data.offers.length===0){
 const offer=await pc.createOffer()
 await pc.setLocalDescription(offer)
 data.offers.push(offer.sdp)
-await pushJSON(data)
+await updateJSON(data)
 }
 
 setTimeout(syncSignaling,1000)
