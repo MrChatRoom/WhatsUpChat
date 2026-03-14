@@ -1,7 +1,10 @@
 let username=""
-let peers=[]
-let connections={}
-let id=Math.random().toString(36).substring(2)
+let id=Math.random().toString(36).slice(2)
+
+let peers={}
+let channels={}
+
+const socket=new WebSocket("wss://signaling.fly.dev")
 
 const login=document.getElementById("login")
 const chat=document.getElementById("chat")
@@ -16,7 +19,7 @@ username=nameInput.value.trim()
 if(!username)return
 login.style.display="none"
 chat.style.display="flex"
-start()
+socket.send(JSON.stringify({type:"join",id:id}))
 }
 
 function addMessage(t){
@@ -29,7 +32,7 @@ messages.scrollTop=messages.scrollHeight
 sendBtn.onclick=()=>{
 const m=msgInput.value.trim()
 if(!m)return
-Object.values(connections).forEach(c=>c.send(username+": "+m))
+Object.values(channels).forEach(c=>c.send(username+": "+m))
 addMessage(username+": "+m)
 msgInput.value=""
 }
@@ -38,74 +41,92 @@ msgInput.addEventListener("keypress",e=>{
 if(e.key==="Enter")sendBtn.click()
 })
 
-async function getSignal(){
-try{
-const r=await fetch("signaling.json?t="+Date.now())
-return await r.json()
-}catch{
-return {offers:[],answers:[]}
-}
-}
+function createPeer(peerId,initiator){
 
-async function sendSignal(data){
-await fetch("signaling.json",{
-method:"PUT",
-headers:{"Content-Type":"application/json"},
-body:JSON.stringify(data)
+const pc=new RTCPeerConnection({
+iceServers:[
+{urls:"stun:stun.l.google.com:19302"}
+]
 })
-}
 
-function createPeer(peerId,offer){
-const pc=new RTCPeerConnection()
+if(initiator){
+const ch=pc.createDataChannel("chat")
+setupChannel(ch,peerId)
+}
 
 pc.ondatachannel=e=>{
-const ch=e.channel
-connections[peerId]=ch
-ch.onmessage=ev=>addMessage(ev.data)
+setupChannel(e.channel,peerId)
 }
 
-if(!offer){
-const ch=pc.createDataChannel("chat")
-connections[peerId]=ch
-ch.onmessage=e=>addMessage(e.data)
+pc.onicecandidate=e=>{
+if(e.candidate){
+socket.send(JSON.stringify({
+type:"ice",
+to:peerId,
+from:id,
+candidate:e.candidate
+}))
 }
+}
+
+peers[peerId]=pc
 
 return pc
 }
 
-async function start(){
+function setupChannel(ch,peerId){
 
-let pc=createPeer("host")
+channels[peerId]=ch
 
+ch.onmessage=e=>{
+addMessage(e.data)
+}
+
+}
+
+socket.onmessage=async e=>{
+
+const data=JSON.parse(e.data)
+
+if(data.from===id)return
+
+if(data.type==="join"){
+const pc=createPeer(data.id,true)
 const offer=await pc.createOffer()
 await pc.setLocalDescription(offer)
 
-let data=await getSignal()
-data.offers.push({id:id,sdp:offer.sdp})
-await sendSignal(data)
-
-setInterval(async()=>{
-
-let signal=await getSignal()
-
-for(const o of signal.offers){
-if(o.id!==id && !connections[o.id]){
-let peer=createPeer(o.id,true)
-await peer.setRemoteDescription({type:"offer",sdp:o.sdp})
-let ans=await peer.createAnswer()
-await peer.setLocalDescription(ans)
-
-signal.answers.push({to:o.id,from:id,sdp:ans.sdp})
-await sendSignal(signal)
-}
+socket.send(JSON.stringify({
+type:"offer",
+to:data.id,
+from:id,
+offer:offer
+}))
 }
 
-for(const a of signal.answers){
-if(a.to===id && !connections[a.from]){
-await pc.setRemoteDescription({type:"answer",sdp:a.sdp})
-}
+if(data.type==="offer" && data.to===id){
+const pc=createPeer(data.from,false)
+
+await pc.setRemoteDescription(data.offer)
+
+const answer=await pc.createAnswer()
+await pc.setLocalDescription(answer)
+
+socket.send(JSON.stringify({
+type:"answer",
+to:data.from,
+from:id,
+answer:answer
+}))
 }
 
-},1000)
+if(data.type==="answer" && data.to===id){
+await peers[data.from].setRemoteDescription(data.answer)
+}
+
+if(data.type==="ice" && data.to===id){
+if(peers[data.from]){
+await peers[data.from].addIceCandidate(data.candidate)
+}
+}
 
 }
