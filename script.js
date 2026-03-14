@@ -4,7 +4,7 @@ let id=Math.random().toString(36).slice(2)
 let peers={}
 let channels={}
 
-const socket=new WebSocket("wss://signaling.fly.dev")
+const socket=new WebSocket("wss://socketsbay.com/wss/v2/1/demo/")
 
 const login=document.getElementById("login")
 const chat=document.getElementById("chat")
